@@ -103,7 +103,7 @@ def _parse_vessel(prefix: str, form) -> Vessel | DSN:
             vessel.add_antenna(Antenna(label, power, combinability))
 
     if not vessel.antennae:
-        raise ValueError(f"Vessel {prefix!r} has no antennae")
+        raise ValueError(f"One of your vessels has no antennae")
 
     return vessel
 

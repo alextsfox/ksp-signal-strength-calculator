@@ -113,6 +113,8 @@
 
                     {# Surface → Orbit #}
                     <div id="hop{{ i }}-sec-surface_to_orbit">
+                        <p style="margin-top:0; font-size:0.85em; color:#555; cursor:help"
+                           title="Communication between a base station and orbiting vessel stationed directly overhead. If the orbiter is not in a stationary orbit, consider increasing the orbit altitude as a &#39;fudge factor&#39;.">&#9432; Hover for help</p>
                         <div style="display:flex; gap:1rem; align-items:flex-start">
                         <div>
                         <p><label class="inline">Body:</label>
@@ -138,6 +140,8 @@
 
                     {# Orbit → Orbit #}
                     <div id="hop{{ i }}-sec-orbit_to_orbit" style="display:none">
+                        <p style="margin-top:0; font-size:0.85em; color:#555; cursor:help"
+                           title="Communication between two vessels in the same circular orbit with a specified phase angle. For non-circular orbits or orbits of different altitudes, consider using the higher apoapsis of the two vessels.">&#9432; Hover for help</p>
                         <div style="display:flex; gap:1rem; align-items:flex-start">
                         <div>
                         <p><label class="inline">Body:</label>
@@ -588,7 +592,7 @@
               '<option value="1e9">G</option>' +
             '</select>' +
             '<span style="flex-basis:100%;height:0"></span>' +
-            'Comb: <input type="number" class="combinability" step="0.01" min="0" max="1" value="' +
+            '<span title="The combinability describes how efficiently it can combine powers with other antennae on a vessel. A value of 1 indicates perfect combinability. In stock KSP, this is always 0.75, except for the Communotron 16 and Communotron 16-S, which have values of 1.0 and 0.0, respectively." style="cursor:help; text-decoration:underline dotted">Comb</span>: <input type="number" class="combinability" step="0.01" min="0" max="1" value="' +
             (data && data.combinability != null ? data.combinability : 0.75) + '">';
         if (data && data.power_unit) cf.querySelector('.power-unit').value = data.power_unit;
         cf.querySelectorAll('input, select').forEach(el => el.addEventListener('input', () => updatePowerDisplay(prefix)));
