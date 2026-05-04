@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSP Signal Strength Calculator</title>
+    <style>
+        body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-top: 2rem; }
+        h3 { margin-top: 1.5rem; }
+        fieldset { margin-top: 0.5rem; padding: 0.8rem 1rem; }
+        legend { font-weight: bold; }
+        label.inline { display: inline-block; width: 180px; }
+        table { border-collapse: collapse; margin-top: 0.5rem; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 0.4rem 0.8rem; text-align: left; }
+        th { background: #f5f5f5; width: 200px; }
+        .error { color: red; }
+        .signal-bar { display: inline-block; background: #4a9; height: 1em; vertical-align: middle; }
+        .antenna-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0; flex-wrap: wrap; }
+        .antenna-row select.source { min-width: 240px; }
+        .custom-fields { display: none; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+        .custom-fields.visible { display: flex; }
+        .custom-fields input[type=number] { width: 80px; }
+        .remove-btn { cursor: pointer; color: #c00; border: none; background: none; font-size: 1rem; }
+        button[type=button].add-btn { margin-top: 0.5rem; }
+        .hop-arrow { text-align: center; font-size: 1.1rem; color: #555; padding: 0.4rem 0; font-weight: bold; }
+        .chain-controls { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        .aggregate-table th { background: #e8f4e8; }
+        .feedback-box { margin-top: 2.5rem; padding: 0.8rem 1rem; border: 1px solid #bbb; border-radius: 4px; background: #fafafa; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+        .feedback-box p { margin: 0; color: #444; }
+        .feedback-box a { white-space: nowrap; padding: 0.4rem 0.9rem; background: #2c6; color: #fff; border-radius: 3px; text-decoration: none; font-weight: bold; }
+        .feedback-box a:hover { background: #1a5; }
+    </style>
+</head>
+<body>
+    <h1>KSP Signal Strength Calculator</h1>
+
+    <form method="post" id="hopForm">
+        <input type="hidden" id="num_hops" name="num_hops" value="1">
+
+        <!-- ── Settings ──────────────────────────────────────────────── -->
+        <fieldset>
+            <legend>Settings</legend>
+            <p><label class="inline">Difficulty:</label>
+            <select id="difficulty" name="difficulty" onchange="toggleCustomDifficulty(this.value)">
+                <option value="easy">Easy</option>
+                <option value="normal">Normal</option>
+                <option value="moderate">Moderate</option>
+                <option value="hard">Hard</option>
+                <option value="custom">Custom</option>
+            </select></p>
+            <p id="custom-difficulty-row" style="display:none">
+                <label class="inline">Range modifier:</label>
+                <input type="number" id="custom_range_modifier" name="custom_range_modifier"
+                       min="0.01" max="1" step="0.01" value="1.0">
+                <small style="color:#555">(0-1; non-DSN antenna power)</small>
+            </p>
+        </fieldset>
+
+        <div id="chain">
+            {% for i in range(6) %}
+
+            {# ── Vessel block ─────────────────────────────────────────── #}
+            <div id="vb{{ i }}" {% if i >= 2 %}style="display:none"{% endif %}>
+                <fieldset>
+                    <legend id="vb{{ i }}-legend">Vessel {{ 'ABCDEF'[i] }}</legend>
+
+                    <p><label class="inline">Type:</label>
+                    <select id="v{{ i }}_type" name="v{{ i }}_type"
+                            onchange="toggleVesselType('v{{ i }}', this.value)">
+                        <option value="direct">Vessel (Direct Connect)</option>
+                        <option value="relay">Vessel (Relay)</option>
+                        <option value="dsn">DSN (Tracking Station)</option>
+                    </select></p>
+
+                    <div id="v{{ i }}-dsn-config" style="display:none">
+                        <p><label class="inline">DSN Level:</label>
+                        <select id="v{{ i }}_dsn_level" name="v{{ i }}_dsn_level">
+                            {% for lvl in dsn_levels %}
+                            <option value="{{ lvl }}">Level {{ lvl }}</option>
+                            {% endfor %}
+                        </select></p>
+                    </div>
+
+                    <div id="v{{ i }}-vessel-config">
+                        <div id="v{{ i }}-antennae"></div>
+                        <button type="button" class="add-btn" id="v{{ i }}-add-btn"
+                                onclick="addAntenna('v{{ i }}')">+ Add Antenna</button>
+                        <div style="margin-top:0.3em; font-size:0.85em; color:#555">
+                            Total power: <span id="v{{ i }}-power-display">—</span>
+                        </div>
+                    </div>
+
+                    <input type="hidden" name="v{{ i }}_antenna_data"
+                           id="v{{ i }}_antenna_data" value="[]">
+                </fieldset>
+            </div>
+
+            {% if i < 5 %}
+            {# ── Hop block ────────────────────────────────────────────── #}
+            <div id="hb{{ i }}" {% if i >= 1 %}style="display:none"{% endif %}>
+                <div class="hop-arrow">↓ Hop {{ i + 1 }}</div>
+                <fieldset>
+
+                    <p><label class="inline">Hop type:</label>
+                    <select id="hop{{ i }}_type" name="hop{{ i }}_type"
+                            onchange="showHopSection({{ i }}, this.value)">
+                        <option value="surface_to_orbit">Surface → Orbit</option>
+                        <option value="orbit_to_orbit">Orbit → Orbit</option>
+                        <option value="body_to_dsn">Body → DSN (Tracking Station)</option>
+                        <option value="raw_distance">Raw distance</option>
+                    </select></p>
+
+                    {# Surface → Orbit #}
+                    <div id="hop{{ i }}-sec-surface_to_orbit">
+                        <div style="display:flex; gap:1rem; align-items:flex-start">
+                        <div>
+                        <p><label class="inline">Body:</label>
+                        <select id="hop{{ i }}_sto_body" name="hop{{ i }}_sto_body"
+                                onchange="drawSurfaceDiagram({{ i }})">
+                            {% for b in bodies %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+                        </select></p>
+                        <p><label class="inline">Orbit altitude:</label>
+                        <input type="number" id="hop{{ i }}_sto_altitude"
+                               name="hop{{ i }}_sto_altitude" min="0" step="any" value="100000"
+                               oninput="drawSurfaceDiagram({{ i }})">
+                        <select id="hop{{ i }}_sto_alt_unit" name="hop{{ i }}_sto_alt_unit"
+                                onchange="drawSurfaceDiagram({{ i }})">
+                            <option value="m" selected>m</option>
+                            <option value="km">km</option>
+                            <option value="au">AU</option>
+                        </select></p>
+                        </div>
+                        <svg id="hop{{ i }}-sto-svg" width="140" height="140"
+                             style="flex-shrink:0; background:#fff"></svg>
+                        </div>
+                    </div>
+
+                    {# Orbit → Orbit #}
+                    <div id="hop{{ i }}-sec-orbit_to_orbit" style="display:none">
+                        <div style="display:flex; gap:1rem; align-items:flex-start">
+                        <div>
+                        <p><label class="inline">Body:</label>
+                        <select id="hop{{ i }}_oto_body" name="hop{{ i }}_oto_body"
+                                onchange="drawOrbitDiagram({{ i }})">
+                            {% for b in bodies %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+                        </select></p>
+                        <p><label class="inline">Orbit altitude:</label>
+                        <input type="number" id="hop{{ i }}_oto_altitude"
+                               name="hop{{ i }}_oto_altitude" min="0" step="any" value="100000"
+                               oninput="drawOrbitDiagram({{ i }})">
+                        <select id="hop{{ i }}_oto_alt_unit" name="hop{{ i }}_oto_alt_unit"
+                                onchange="drawOrbitDiagram({{ i }})">
+                            <option value="m" selected>m</option>
+                            <option value="km">km</option>
+                            <option value="au">AU</option>
+                        </select></p>
+                        <p><label class="inline">Angle between vessels (°):</label>
+                        <input type="number" id="hop{{ i }}_oto_angle"
+                               name="hop{{ i }}_oto_angle" min="0.1" max="180" step="0.1" value="120"
+                               oninput="drawOrbitDiagram({{ i }})"></p>
+                        </div>
+                        <svg id="hop{{ i }}-orbit-svg" width="140" height="140"
+                             style="flex-shrink:0; background:#fff"></svg>
+                        </div>
+                    </div>
+
+                    {# Body → DSN #}
+                    <div id="hop{{ i }}-sec-body_to_dsn" style="display:none">
+                        <div style="display:flex; gap:1rem; align-items:center">
+                        <div>
+                        <p><label class="inline">Body:</label>
+                        <select id="hop{{ i }}_dsn_body" name="hop{{ i }}_dsn_body"
+                                onchange="drawDSNDiagram({{ i }})">
+                            {% for b in bodies %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+                        </select></p>
+                        </div>
+                        <svg id="hop{{ i }}-dsn-svg" width="200" height="100"
+                             style="flex-shrink:0; background:#fff"></svg>
+                        </div>
+                    </div>
+
+                    {# Raw distance #}
+                    <div id="hop{{ i }}-sec-raw_distance" style="display:none">
+                        <div style="display:flex; gap:1rem; align-items:center">
+                        <div>
+                        <p><label class="inline">Distance:</label>
+                        <input type="number" id="hop{{ i }}_rd_distance"
+                               name="hop{{ i }}_rd_distance" min="0" step="any" value="1">
+                        <select id="hop{{ i }}_rd_unit" name="hop{{ i }}_rd_unit">
+                            <option value="m">m</option>
+                            <option value="km" selected>km</option>
+                            <option value="au">AU</option>
+                        </select></p>
+                        </div>
+                        <svg id="hop{{ i }}-rd-svg" width="140" height="50"
+                             style="flex-shrink:0; background:#fff"></svg>
+                        </div>
+                    </div>
+
+                </fieldset>
+            </div>
+            {% endif %}
+
+            {% endfor %}
+        </div>{# end #chain #}
+
+        <div class="chain-controls">
+            <button type="button" id="add-hop-btn" onclick="addHop()">+ Add Hop</button>
+            <button type="button" id="remove-hop-btn" onclick="removeHop()" disabled>− Remove Last Hop</button>
+            <button type="submit">Calculate</button>
+        </div>
+    </form>
+
+    {% if error %}
+    <p class="error">Error: {{ error }}</p>
+    {% endif %}
+
+    {% if results %}
+    <h2>Results</h2>
+
+    {% for hop in results.hops %}
+    <h3>Hop {{ loop.index }}: {{ hop.label }}</h3>
+    <table>
+        <tr><th>From</th><td>{{ hop.vessel_a }}</td></tr>
+        <tr><th>To</th>  <td>{{ hop.vessel_b }}</td></tr>
+        <tr><th>Max range</th><td>{{ "{:,.1f}".format(hop.max_range_mm) }} Mm</td></tr>
+        {% if hop.is_range %}
+        <tr><th>Closest distance</th><td>{{ "{:,.3f}".format(hop.dist_best_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal (closest)</th>
+            <td><span class="signal-bar" style="width:{{ (hop.signal_best * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(hop.signal_best * 100) }}</td>
+        </tr>
+        <tr><th>Furthest distance</th><td>{{ "{:,.3f}".format(hop.dist_worst_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal (furthest)</th>
+            <td><span class="signal-bar" style="width:{{ (hop.signal_worst * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(hop.signal_worst * 100) }}</td>
+        </tr>
+        {% else %}
+        <tr><th>Distance</th><td>{{ "{:,.3f}".format(hop.dist_best_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal strength</th>
+            <td><span class="signal-bar" style="width:{{ (hop.signal_best * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(hop.signal_best * 100) }}</td>
+        </tr>
+        {% endif %}
+    </table>
+    {% endfor %}
+
+    {% if results.hops | length > 1 or results.aggregate.has_range %}
+    <h3>Aggregate</h3>
+    <table class="aggregate-table">
+        {% if results.aggregate.has_range %}
+        <tr>
+            <th>Best case signal</th>
+            <td><span class="signal-bar" style="width:{{ (results.aggregate.signal_best * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(results.aggregate.signal_best * 100) }}</td>
+        </tr>
+        <tr>
+            <th>Worst case signal</th>
+            <td><span class="signal-bar" style="width:{{ (results.aggregate.signal_worst * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(results.aggregate.signal_worst * 100) }}</td>
+        </tr>
+        {% else %}
+        <tr>
+            <th>Total signal strength</th>
+            <td><span class="signal-bar" style="width:{{ (results.aggregate.signal_best * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(results.aggregate.signal_best * 100) }}</td>
+        </tr>
+        {% endif %}
+    </table>
+    {% endif %}
+
+    {% endif %}
+
+    <div class="feedback-box">
+        <p>Have a question, found a bug, or want to request a feature?</p>
+        <a href="https://wikipedia.org" target="_blank" rel="noopener">Open an Issue &#8599;</a>
+    </div>
+
+    <script>
+    const ANTENNA_OPTIONS = {{ antenna_options | tojson }};
+    const PLANET_RADII    = {{ planet_radii | tojson }};
+    const FORM_STATE      = {{ form_state | tojson }};
+
+    let numHops = 1;
+
+    // ── Add / remove hops ────────────────────────────────────────────────────
+    function addHop() {
+        if (numHops >= 5) return;
+        document.getElementById('hb' + numHops).style.display = '';
+        document.getElementById('vb' + (numHops + 1)).style.display = '';
+        numHops++;
+        document.getElementById('num_hops').value = numHops;
+        updateButtons();
+    }
+
+    function removeHop() {
+        if (numHops <= 1) return;
+        numHops--;
+        document.getElementById('hb' + numHops).style.display = 'none';
+        document.getElementById('vb' + (numHops + 1)).style.display = 'none';
+        document.getElementById('num_hops').value = numHops;
+        updateButtons();
+    }
+
+    function updateButtons() {
+        document.getElementById('add-hop-btn').disabled    = numHops >= 5;
+        document.getElementById('remove-hop-btn').disabled = numHops <= 1;
+    }
+
+    // ── Hop section show/hide ─────────────────────────────────────────────────
+    const VESSEL_LABELS = ['Vessel A','Vessel B','Vessel C','Vessel D','Vessel E','Vessel F'];
+
+    function showHopSection(hopIdx, type) {
+        ['surface_to_orbit', 'orbit_to_orbit', 'body_to_dsn', 'raw_distance'].forEach(t => {
+            const el = document.getElementById(`hop${hopIdx}-sec-${t}`);
+            if (el) el.style.display = t === type ? '' : 'none';
+        });
+        // The downstream vessel for this hop is index hopIdx+1
+        const downstreamIdx = hopIdx + 1;
+        const legend = document.getElementById(`vb${downstreamIdx}-legend`);
+        const typeEl = document.getElementById(`v${downstreamIdx}_type`);
+        if (type === 'body_to_dsn') {
+            if (legend) legend.textContent = 'DSN (Tracking Station)';
+            if (typeEl) { typeEl.value = 'dsn'; toggleVesselType(`v${downstreamIdx}`, 'dsn'); }
+        } else {
+            if (legend) legend.textContent = VESSEL_LABELS[downstreamIdx];
+            // Only reset type if it was forced to DSN by a previous body_to_dsn selection
+            if (typeEl && typeEl.value === 'dsn') {
+                typeEl.value = 'direct';
+                toggleVesselType(`v${downstreamIdx}`, 'direct');
+            }
+        }
+        if (type === 'orbit_to_orbit')   drawOrbitDiagram(hopIdx);
+        if (type === 'surface_to_orbit') drawSurfaceDiagram(hopIdx);
+        if (type === 'body_to_dsn')      drawDSNDiagram(hopIdx);
+        if (type === 'raw_distance')     drawRawDiagram(hopIdx);
+    }
+
+    // ── Raw-distance SVG diagram ─────────────────────────────────────────────
+    function drawRawDiagram(hopIdx) {
+        const svg = document.getElementById(`hop${hopIdx}-rd-svg`);
+        if (!svg) return;
+        const W = 140, H = 50, cy = H / 2;
+        const x1 = 18, x2 = W - 18;
+        svg.innerHTML =
+            `<line x1="${x1}" y1="${cy}" x2="${x2}" y2="${cy}" stroke="#e33" stroke-width="1.5"/>` +
+            `<circle cx="${x1}" cy="${cy}" r="5" fill="#4af"/>` +
+            `<circle cx="${x2}" cy="${cy}" r="5" fill="#4af"/>`;
+    }
+
+    // ── Body-to-DSN SVG diagram ──────────────────────────────────────────────
+    function drawDSNDiagram(hopIdx) {
+        const svg = document.getElementById(`hop${hopIdx}-dsn-svg`);
+        if (!svg) return;
+        const W = 200, H = 100;
+        const body = document.getElementById(`hop${hopIdx}_dsn_body`)?.value;
+        const bodyColor = BODY_COLORS[body] || '#aaa';
+        const atmo = ATMOSPHERES[body];
+
+        // Body: right-semicircle on the left; centre pinned to left edge
+        const bodyPx = H * 0.38;
+        const cx = 0, cy = H / 2;
+
+        const rightArc = (r) =>
+            `M ${cx},${(cy - r).toFixed(2)} A ${r.toFixed(2)},${r.toFixed(2)} 0 0 1 ${cx},${(cy + r).toFixed(2)}`;
+
+        const atmoPart = atmo
+            ? (() => {
+                const ar = bodyPx * (1 + atmo.altM / (PLANET_RADII[body] || 600000));
+                return `<path d="${rightArc(ar)}" fill="${atmo.color}" stroke="none"/>`;
+              })()
+            : '';
+
+        // DSN image: aspect ratio ~796:1280 ≈ 0.622; fit height = H * 0.85
+        const imgH = H * 0.85, imgW = imgH * (796 / 1280);
+        const imgX = W - imgW - 4, imgY = (H - imgH) / 2;
+
+        // Horizontal red line from body surface to left edge of image, at cy
+        const lineX1 = cx + bodyPx, lineX2 = imgX;
+
+        svg.innerHTML =
+            `<defs><clipPath id="dsn-clip-${hopIdx}"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath></defs>` +
+            `<g clip-path="url(#dsn-clip-${hopIdx})">` +
+            `<line x1="${lineX1.toFixed(2)}" y1="${cy}" x2="${lineX2.toFixed(2)}" y2="${cy}" stroke="#e33" stroke-width="1.5"/>` +
+            atmoPart +
+            `<path d="${rightArc(bodyPx)}" fill="${bodyColor}"/>` +
+            `<image href="/static/dsn.svg" x="${imgX.toFixed(2)}" y="${imgY.toFixed(2)}" width="${imgW.toFixed(2)}" height="${imgH.toFixed(2)}"/>` +
+            `</g>`;
+    }
+
+    // ── Surface-to-orbit SVG diagram ──────────────────────────────────────────
+    function drawSurfaceDiagram(hopIdx) {
+        const svg = document.getElementById(`hop${hopIdx}-sto-svg`);
+        if (!svg) return;
+        const body    = document.getElementById(`hop${hopIdx}_sto_body`)?.value;
+        const altRaw  = parseFloat(document.getElementById(`hop${hopIdx}_sto_altitude`)?.value) || 100000;
+        const altUnit = document.getElementById(`hop${hopIdx}_sto_alt_unit`)?.value || 'm';
+        const ALT_TO_M = { m: 1, km: 1e3, au: 13599840256 };
+        const altM    = altRaw * (ALT_TO_M[altUnit] ?? 1);
+
+        const bodyR  = PLANET_RADII[body] || 600000;
+        const orbitR = bodyR + altM;
+
+        // Side view, rotated 90° CW: body centre on the LEFT edge, orbit extends RIGHT.
+        // Only the right half of the orbit/body/atmosphere is drawn.
+        const S   = 140;
+        const pad = 10;
+        // Scale so the right half of the orbit fits vertically (±orbitPx) and horizontally.
+        const scale   = (S / 2 - pad) / orbitR;
+        const orbitPx = orbitR * scale;
+        const bodyPx  = bodyR  * scale;
+        // Body centre at the left edge with padding
+        const cx = pad;
+        const cy = S / 2;
+
+        const bodyColor = BODY_COLORS[body] || '#aaa';
+        const atmo = ATMOSPHERES[body];
+
+        // Surface vessel: rightmost point of body
+        const svx = cx + bodyPx, svy = cy;
+        // Orbit vessel: rightmost point of orbit
+        const ovx = cx + orbitPx, ovy = cy;
+
+        // Right-semicircle arc helper: from (cx, cy-r) CW to (cx, cy+r) → sweeps right
+        const rightArc = (r) =>
+            `M ${cx.toFixed(2)},${(cy - r).toFixed(2)} A ${r.toFixed(2)},${r.toFixed(2)} 0 0 1 ${cx.toFixed(2)},${(cy + r).toFixed(2)}`;
+
+        // Atmosphere right-semicircle
+        const atmoPart = atmo
+            ? (()=>{
+                const ar = (bodyR + atmo.altM) * scale;
+                return `<path d="${rightArc(ar)}" fill="${atmo.color}" stroke="none"/>`;
+              })()
+            : '';
+
+        svg.innerHTML =
+            `<defs><clipPath id="sto-clip-${hopIdx}"><rect x="0" y="0" width="${S}" height="${S}"/></clipPath></defs>` +
+            `<g clip-path="url(#sto-clip-${hopIdx})">` +
+            // orbit right-semicircle (grey stroke)
+            `<path d="${rightArc(orbitPx)}" fill="none" stroke="#bbb" stroke-width="1.5"/>` +
+            atmoPart +
+            // body right-semicircle (filled)
+            `<path d="${rightArc(bodyPx)}" fill="${bodyColor}"/>` +
+            // red line from surface vessel to orbit vessel (horizontal)
+            `<line x1="${svx.toFixed(2)}" y1="${svy.toFixed(2)}" x2="${ovx.toFixed(2)}" y2="${ovy.toFixed(2)}" stroke="#e33" stroke-width="1.5"/>` +
+            // surface vessel dot
+            `<circle cx="${svx.toFixed(2)}" cy="${svy.toFixed(2)}" r="4" fill="#4af"/>` +
+            // orbit vessel dot
+            `<circle cx="${ovx.toFixed(2)}" cy="${ovy.toFixed(2)}" r="4" fill="#4af"/>` +
+            `</g>`;
+    }
+
+    // ── Orbit-to-orbit SVG diagram ────────────────────────────────────────────
+    const ATMOSPHERES = {
+        Eve:    { altM: 90000,  color: 'rgba(180,130,220,0.35)' },
+        Kerbin: { altM: 70000,  color: 'rgba(130,180,255,0.35)' },
+        Duna:   { altM: 50000,  color: 'rgba(255,180,120,0.35)' },
+        Jool:   { altM: 200000, color: 'rgba(130,210,130,0.35)' },
+        Laythe: { altM: 50000,  color: 'rgba(130,180,255,0.35)' },
+    };
+
+    const BODY_COLORS = {
+        Moho:   '#7a4e2d',
+        Eve:    '#7b3fa0',
+        Gilly:  '#c2a97a',
+        Kerbin: '#3a7bd5',
+        Mun:    '#9e9e9e',
+        Minmus: '#8fd9b0',
+        Duna:   '#c1562a',
+        Ike:    '#5a5a5a',
+        Dres:   '#9e9e9e',
+        Jool:   '#3a7a3a',
+        Laythe: '#1a3a6b',
+        Tylo:   '#c8c8c8',
+        Bop:    '#8a5a55',
+        Pol:    '#b8a87a',
+        Eeloo:  '#aaaaaa',
+    };
+
+    function drawOrbitDiagram(hopIdx) {
+        const svg = document.getElementById(`hop${hopIdx}-orbit-svg`);
+        if (!svg) return;
+        const body    = document.getElementById(`hop${hopIdx}_oto_body`)?.value;
+        const altRaw  = parseFloat(document.getElementById(`hop${hopIdx}_oto_altitude`)?.value) || 100000;
+        const altUnit = document.getElementById(`hop${hopIdx}_oto_alt_unit`)?.value || 'm';
+        const ALT_TO_M = { m: 1, km: 1e3, au: 13599840256 };
+        const altM    = altRaw * (ALT_TO_M[altUnit] ?? 1);
+        const angle   = parseFloat(document.getElementById(`hop${hopIdx}_oto_angle`)?.value) || 120;
+
+        const bodyR  = PLANET_RADII[body] || 600000;
+        const orbitR = bodyR + altM;
+
+        const S  = 140, cx = S / 2, cy = S / 2;
+        const pad = 12;
+        const scale   = (S / 2 - pad) / orbitR;
+        const orbitPx = orbitR * scale;
+        const bodyPx  = Math.max(bodyR * scale, 2);
+
+        // Vessel A at 90° (top), vessel B CCW by `angle` degrees
+        const tA = Math.PI / 2;
+        const tB = tA + angle * Math.PI / 180;
+        const ax = cx + orbitPx * Math.cos(tA), ay = cy - orbitPx * Math.sin(tA);
+        const bx = cx + orbitPx * Math.cos(tB), by = cy - orbitPx * Math.sin(tB);
+
+        const bodyColor = BODY_COLORS[body] || '#aaa';
+
+        const atmo = ATMOSPHERES[body];
+        const atmoPart = atmo
+            ? `<circle cx="${cx}" cy="${cy}" r="${((bodyR + atmo.altM) * scale).toFixed(2)}" fill="${atmo.color}" stroke="none"/>`
+            : '';
+
+        svg.innerHTML =
+            `<circle cx="${cx}" cy="${cy}" r="${orbitPx.toFixed(2)}" fill="none" stroke="#bbb" stroke-width="1.5"/>` +
+            atmoPart +
+            `<circle cx="${cx}" cy="${cy}" r="${bodyPx.toFixed(2)}" fill="${bodyColor}"/>` +
+            `<line x1="${ax.toFixed(2)}" y1="${ay.toFixed(2)}" x2="${bx.toFixed(2)}" y2="${by.toFixed(2)}" stroke="#e33" stroke-width="1.5"/>` +
+            `<circle cx="${ax.toFixed(2)}" cy="${ay.toFixed(2)}" r="4" fill="#4af"/>` +
+            `<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="4" fill="#4af"/>`;
+    }
+
+    // ── Vessel type toggle ────────────────────────────────────────────────────
+    function toggleVesselType(prefix, type) {
+        document.getElementById(prefix + '-dsn-config').style.display    = type === 'dsn' ? '' : 'none';
+        document.getElementById(prefix + '-vessel-config').style.display = type !== 'dsn' ? '' : 'none';
+
+        // Clear all antenna rows, then add one fresh empty row with the correct dropdown
+        document.getElementById(prefix + '-antennae').innerHTML = '';
+        updateAddButton(prefix);
+        if (type !== 'dsn') addAntenna(prefix);
+    }
+
+    // ── Difficulty custom field toggle ────────────────────────────────────────
+    function toggleCustomDifficulty(val) {
+        document.getElementById('custom-difficulty-row').style.display = val === 'custom' ? '' : 'none';
+    }
+
+    // ── Antenna row builder ───────────────────────────────────────────────────
+    function makeAntennaRow(prefix, data) {
+        const vesselMode = document.getElementById(prefix + '_type')?.value || 'direct';
+        const isRelayOnly = vesselMode === 'relay';
+
+        const row = document.createElement('div');
+        row.className = 'antenna-row';
+
+        const sel = document.createElement('select');
+        sel.className = 'source';
+        sel.appendChild(new Option('— select antenna —', 'none'));
+
+        const groups = {};
+        function getOrCreateGroup(name) {
+            if (!groups[name]) {
+                const g = document.createElement('optgroup');
+                g.label = name;
+                sel.appendChild(g);
+                groups[name] = g;
+            }
+            return groups[name];
+        }
+
+        ANTENNA_OPTIONS.forEach(opt => {
+            if (isRelayOnly && opt.group !== 'Relay') return;
+            getOrCreateGroup(opt.group).appendChild(new Option(opt.label, opt.value));
+        });
+
+        // Custom options: Relay always present; Direct only in non-relay-only mode
+        getOrCreateGroup('Relay').appendChild(new Option('Custom (Relay)\u2026', 'custom_relay'));
+        if (!isRelayOnly) {
+            getOrCreateGroup('Direct').appendChild(new Option('Custom (Direct)\u2026', 'custom_direct'));
+        }
+
+        if (data && data.source) sel.value = data.source;
+        sel.onchange = () => { toggleCustomFields(row, sel.value); updatePowerDisplay(prefix); };
+        row.appendChild(sel);
+
+        const cf = document.createElement('div');
+        cf.className = 'custom-fields';
+        cf.innerHTML =
+            'Power: <input type="number" class="power" step="any" min="0" value="' +
+            (data && data.power != null ? data.power : 1) + '">' +
+            '<select class="power-unit">' +
+              '<option value="1">raw</option>' +
+              '<option value="1e3" selected>k</option>' +
+              '<option value="1e6">M</option>' +
+              '<option value="1e9">G</option>' +
+            '</select>' +
+            '<span style="flex-basis:100%;height:0"></span>' +
+            'Comb: <input type="number" class="combinability" step="0.01" min="0" max="1" value="' +
+            (data && data.combinability != null ? data.combinability : 0.75) + '">';
+        if (data && data.power_unit) cf.querySelector('.power-unit').value = data.power_unit;
+        cf.querySelectorAll('input, select').forEach(el => el.addEventListener('input', () => updatePowerDisplay(prefix)));
+        row.appendChild(cf);
+
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'remove-btn';
+        rm.textContent = '\u2715';
+        rm.onclick = () => { row.remove(); updateAddButton(prefix); };
+        row.appendChild(rm);
+
+        const isCustom = data && (data.source === 'custom_relay' || data.source === 'custom_direct');
+        if (isCustom) cf.classList.add('visible');
+        return row;
+    }
+
+    function toggleCustomFields(row, value) {
+        row.querySelector('.custom-fields').classList.toggle(
+            'visible', value === 'custom_relay' || value === 'custom_direct');
+    }
+
+    function addAntenna(prefix, data) {
+        const container = document.getElementById(prefix + '-antennae');
+        if (container.querySelectorAll('.antenna-row').length >= 10) return;
+        container.appendChild(makeAntennaRow(prefix, data));
+        updateAddButton(prefix);
+    }
+
+    function updateAddButton(prefix) {
+        const count = document.getElementById(prefix + '-antennae').querySelectorAll('.antenna-row').length;
+        document.getElementById(prefix + '-add-btn').disabled = count >= 10;
+        updatePowerDisplay(prefix);
+    }
+
+    // ── Vessel power display ──────────────────────────────────────────────────
+    const ANTENNA_POWER_MAP = Object.fromEntries(
+        ANTENNA_OPTIONS.map(o => [o.value, { power: o.power, combinability: o.combinability }])
+    );
+    function fmtPower(p) {
+        if (p >= 1e12) return (p / 1e12).toPrecision(3).replace(/\.?0+$/, '') + ' T';
+        if (p >= 1e9)  return (p / 1e9 ).toPrecision(3).replace(/\.?0+$/, '') + ' G';
+        if (p >= 1e6)  return (p / 1e6 ).toPrecision(3).replace(/\.?0+$/, '') + ' M';
+        if (p >= 1e3)  return (p / 1e3 ).toPrecision(3).replace(/\.?0+$/, '') + ' k';
+        return p.toPrecision(3).replace(/\.?0+$/, '');
+    }
+    function updatePowerDisplay(prefix) {
+        const display = document.getElementById(prefix + '-power-display');
+        if (!display) return;
+        const rows = Array.from(
+            document.getElementById(prefix + '-antennae').querySelectorAll('.antenna-row')
+        );
+        const antennae = rows.map(row => {
+            const source = row.querySelector('.source').value;
+            if (!source || source === 'none') return null;
+            let power, combinability;
+            if (source === 'custom_relay' || source === 'custom_direct') {
+                power = parseFloat(row.querySelector('.power').value || 0)
+                      * parseFloat(row.querySelector('.power-unit').value || 1);
+                combinability = parseFloat(row.querySelector('.combinability').value || 0);
+            } else {
+                const info = ANTENNA_POWER_MAP[source];
+                if (!info) return null;
+                power = info.power;
+                combinability = info.combinability;
+            }
+            return isFinite(power) && power > 0 ? { power, combinability } : null;
+        }).filter(Boolean);
+
+        if (antennae.length === 0) { display.textContent = '—'; return; }
+
+        // KSP vessel power: strongest × (sum / strongest) ^ (avg_combinability)
+        const strongest = Math.max(...antennae.map(a => a.power));
+        const total = antennae.reduce((s, a) => s + a.power, 0);
+        const avgComb = antennae.reduce((s, a) => s + a.combinability, 0) / antennae.length;
+        const vesselPower = strongest * Math.pow(total / strongest, avgComb);
+        display.textContent = fmtPower(vesselPower);
+    }
+
+    // ── Serialize before submit ───────────────────────────────────────────────
+    function collectAntennaData(prefix) {
+        return Array.from(
+            document.getElementById(prefix + '-antennae').querySelectorAll('.antenna-row')
+        ).map(row => {
+            const source = row.querySelector('.source').value;
+            if (source === 'none') return null;
+            if (source === 'custom_relay' || source === 'custom_direct') return {
+                source,
+                power:         row.querySelector('.power').value,
+                power_unit:    row.querySelector('.power-unit').value,
+                combinability: row.querySelector('.combinability').value,
+            };
+            return { source };
+        }).filter(Boolean);
+    }
+
+    document.getElementById('hopForm').addEventListener('submit', function () {
+        document.getElementById('num_hops').value = numHops;
+        for (let i = 0; i <= numHops; i++) {
+            document.getElementById(`v${i}_antenna_data`).value =
+                JSON.stringify(collectAntennaData(`v${i}`));
+        }
+    });
+
+    // ── Restore state on page load ────────────────────────────────────────────
+    window.addEventListener('DOMContentLoaded', () => {
+        numHops = parseInt(FORM_STATE.num_hops || '1', 10);
+
+        // Show/hide vessel and hop blocks
+        for (let i = 0; i <= 5; i++) {
+            document.getElementById('vb' + i).style.display = i <= numHops ? '' : 'none';
+        }
+        for (let h = 0; h < 5; h++) {
+            document.getElementById('hb' + h).style.display = h < numHops ? '' : 'none';
+        }
+        document.getElementById('num_hops').value = numHops;
+        updateButtons();
+
+        // Restore hop type selectors and section visibility
+        for (let h = 0; h < numHops; h++) {
+            const type = FORM_STATE[`hop${h}_type`] || 'surface_to_orbit';
+            const sel = document.getElementById(`hop${h}_type`);
+            if (sel) sel.value = type;
+
+            // Restore hop-specific field values BEFORE drawing diagrams
+            [
+                `hop${h}_sto_body`, `hop${h}_sto_altitude`, `hop${h}_sto_alt_unit`,
+                `hop${h}_oto_body`, `hop${h}_oto_altitude`, `hop${h}_oto_alt_unit`, `hop${h}_oto_angle`,
+                `hop${h}_dsn_body`,
+                `hop${h}_rd_distance`, `hop${h}_rd_unit`,
+            ].forEach(key => {
+                const el = document.getElementById(key);
+                if (el && FORM_STATE[key] != null) el.value = FORM_STATE[key];
+            });
+
+            showHopSection(h, type);
+        }
+
+        // Restore difficulty
+        const diff = FORM_STATE.difficulty || 'normal';
+        const diffEl = document.getElementById('difficulty');
+        if (diffEl) { diffEl.value = diff; toggleCustomDifficulty(diff); }
+        if (diff === 'custom' && FORM_STATE.custom_range_modifier) {
+            const rmEl = document.getElementById('custom_range_modifier');
+            if (rmEl) rmEl.value = FORM_STATE.custom_range_modifier;
+        }
+
+        // Restore vessel state
+        for (let i = 0; i <= numHops; i++) {
+            const prefix = `v${i}`;
+            const type = FORM_STATE[prefix + '_type'] || 'direct';
+            const typeEl = document.getElementById(prefix + '_type');
+            if (typeEl) typeEl.value = type;
+            toggleVesselType(prefix, type);
+
+            const dsnLevel = FORM_STATE[prefix + '_dsn_level'];
+            if (dsnLevel) {
+                const lvlEl = document.getElementById(prefix + '_dsn_level');
+                if (lvlEl) lvlEl.value = dsnLevel;
+            }
+
+            let antennaData = [];
+            try { antennaData = JSON.parse(FORM_STATE[prefix + '_antenna_data'] || '[]'); } catch (e) {}
+            if (antennaData.length === 0) {
+                addAntenna(prefix);
+            } else {
+                antennaData.forEach(a => addAntenna(prefix, a));
+            }
+        }
+    });
+    </script>
+</body>
+</html>

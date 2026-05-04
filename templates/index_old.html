@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KSP CommNet Signal Strength</title>
+    <style>
+        body { font-family: sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-top: 2rem; }
+        fieldset { margin-top: 1rem; padding: 1rem; }
+        label.inline { display: inline-block; width: 180px; }
+        .section { display: none; }
+        .section.active { display: block; }
+        table { border-collapse: collapse; margin-top: 1rem; }
+        th, td { border: 1px solid #ccc; padding: 0.4rem 0.8rem; text-align: left; }
+        .error { color: red; }
+        .signal-bar { display: inline-block; background: #4a9; height: 1em; vertical-align: middle; }
+        .antenna-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0; flex-wrap: wrap; }
+        .antenna-row select.source { min-width: 240px; }
+        .custom-fields { display: none; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+        .custom-fields.visible { display: flex; }
+        .custom-fields input[type=number] { width: 80px; }
+        .remove-btn { cursor: pointer; color: #c00; border: none; background: none; font-size: 1rem; }
+        button[type=button].add-btn { margin-top: 0.5rem; }
+        .vessel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        @media (max-width: 550px) { .vessel-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <h1>KSP CommNet — Hop Calculator</h1>
+
+    <form method="post" id="hopForm">
+
+        <!-- ── Hop type ─────────────────────────────────────────────── -->
+        <fieldset>
+            <legend>Hop type</legend>
+            <label><input type="radio" name="hop_type" value="surface_to_orbit"
+                {% if hop_type == 'surface_to_orbit' %}checked{% endif %}
+                onchange="showSection(this.value)"> Surface → Orbit</label><br>
+            <label><input type="radio" name="hop_type" value="orbit_to_orbit"
+                {% if hop_type == 'orbit_to_orbit' %}checked{% endif %}
+                onchange="showSection(this.value)"> Orbit → Orbit</label><br>
+            <label><input type="radio" name="hop_type" value="body_to_dsn"
+                {% if hop_type == 'body_to_dsn' %}checked{% endif %}
+                onchange="showSection(this.value)"> Body → DSN</label><br>
+            <label><input type="radio" name="hop_type" value="raw_distance"
+                {% if hop_type == 'raw_distance' %}checked{% endif %}
+                onchange="showSection(this.value)"> Raw distance</label>
+        </fieldset>
+
+        <!-- ── Surface → Orbit ───────────────────────────────────────── -->
+        <fieldset id="sec-surface_to_orbit" class="section {% if hop_type == 'surface_to_orbit' %}active{% endif %}">
+            <legend>Surface → Orbit</legend>
+            <p><label class="inline" for="sto-body">Body:</label>
+            <select name="body" id="sto-body">
+                {% for b in bodies %}
+                <option value="{{ b }}" {% if hop_type == 'surface_to_orbit' and form_state.get('body') == b %}selected{% endif %}>{{ b }}</option>
+                {% endfor %}
+            </select></p>
+            <p><label class="inline" for="sto-alt">Orbit altitude (km):</label>
+            <input type="number" name="altitude" id="sto-alt" min="1" step="1"
+                   value="{{ form_state.get('altitude', 500) if hop_type == 'surface_to_orbit' else 500 }}"></p>
+        </fieldset>
+
+        <!-- ── Orbit → Orbit ─────────────────────────────────────────── -->
+        <fieldset id="sec-orbit_to_orbit" class="section {% if hop_type == 'orbit_to_orbit' %}active{% endif %}">
+            <legend>Orbit → Orbit (same orbit)</legend>
+            <p><label class="inline" for="oto-body">Body:</label>
+            <select name="body" id="oto-body">
+                {% for b in bodies %}
+                <option value="{{ b }}" {% if hop_type == 'orbit_to_orbit' and form_state.get('body') == b %}selected{% endif %}>{{ b }}</option>
+                {% endfor %}
+            </select></p>
+            <p><label class="inline" for="oto-alt">Orbit altitude (km):</label>
+            <input type="number" name="altitude" id="oto-alt" min="1" step="1"
+                   value="{{ form_state.get('altitude', 500) if hop_type == 'orbit_to_orbit' else 500 }}"></p>
+            <p><label class="inline" for="oto-angle">Angle between vessels (°):</label>
+            <input type="number" name="angle" id="oto-angle" min="0.1" max="180" step="0.1"
+                   value="{{ form_state.get('angle', 120) if hop_type == 'orbit_to_orbit' else 120 }}"></p>
+        </fieldset>
+
+        <!-- ── Body → DSN ────────────────────────────────────────────── -->
+        <fieldset id="sec-body_to_dsn" class="section {% if hop_type == 'body_to_dsn' %}active{% endif %}">
+            <legend>Body → DSN (Kerbin)</legend>
+            <p><label class="inline" for="dsn-body">Body:</label>
+            <select name="body" id="dsn-body">
+                {% for b in bodies %}
+                <option value="{{ b }}" {% if hop_type == 'body_to_dsn' and form_state.get('body') == b %}selected{% endif %}>{{ b }}</option>
+                {% endfor %}
+            </select></p>
+        </fieldset>
+
+        <!-- ── Raw distance ──────────────────────────────────────────── -->
+        <fieldset id="sec-raw_distance" class="section {% if hop_type == 'raw_distance' %}active{% endif %}">
+            <legend>Raw distance</legend>
+            <p><label class="inline" for="rd-distance">Distance:</label>
+            <input type="number" name="distance" id="rd-distance" min="0" step="any"
+                   value="{{ form_state.get('distance', 1) if hop_type == 'raw_distance' else 1 }}">
+            <select name="unit" id="rd-unit">
+                <option value="m"  {% if hop_type == 'raw_distance' and form_state.get('unit') == 'm'  %}selected{% endif %}>m</option>
+                <option value="km" {% if hop_type == 'raw_distance' and form_state.get('unit', 'km') == 'km' %}selected{% endif %}>km</option>
+                <option value="au" {% if hop_type == 'raw_distance' and form_state.get('unit') == 'au' %}selected{% endif %}>AU</option>
+            </select></p>
+        </fieldset>
+
+        <!-- ── Vessel configuration ───────────────────────────────────── -->
+        <h2>Vessels</h2>
+        <div class="vessel-grid">
+            {% for prefix, label in [('va', 'Vessel A'), ('vb', 'Vessel B')] %}
+            <fieldset id="{{ prefix }}-fieldset">
+                <legend>{{ label }}</legend>
+
+                <p><label class="inline">Type:</label>
+                <select id="{{ prefix }}_type" name="{{ prefix }}_type"
+                        onchange="toggleVesselType('{{ prefix }}', this.value)">
+                    <option value="vessel">Vessel</option>
+                    <option value="dsn">DSN (Tracking Station)</option>
+                </select></p>
+
+                <!-- DSN config -->
+                <div id="{{ prefix }}-dsn-config" style="display:none">
+                    <p><label class="inline">DSN Level:</label>
+                    <select id="{{ prefix }}_dsn_level" name="{{ prefix }}_dsn_level">
+                        {% for lvl in dsn_levels %}
+                        <option value="{{ lvl }}">Level {{ lvl }}</option>
+                        {% endfor %}
+                    </select></p>
+                </div>
+
+                <!-- Vessel antenna config -->
+                <div id="{{ prefix }}-vessel-config">
+                    <div id="{{ prefix }}-antennae"></div>
+                    <button type="button" class="add-btn" id="{{ prefix }}-add-btn"
+                            onclick="addAntenna('{{ prefix }}')">+ Add Antenna</button>
+                </div>
+
+                <!-- Serialised antenna JSON, populated on submit -->
+                <input type="hidden" name="{{ prefix }}_antenna_data" id="{{ prefix }}_antenna_data" value="[]">
+            </fieldset>
+            {% endfor %}
+        </div>
+
+        <p><button type="submit">Calculate</button></p>
+    </form>
+
+    {% if error %}
+    <p class="error">Error: {{ error }}</p>
+    {% endif %}
+
+    {% if result %}
+    <h2>{{ result.label }}</h2>
+    <table>
+        <tr><th>Vessel A</th><td>{{ result.vessel_a }}</td></tr>
+        <tr><th>Vessel B</th><td>{{ result.vessel_b }}</td></tr>
+        <tr><th>Max range</th><td>{{ "{:,.1f}".format(result.max_range_mm) }} Mm</td></tr>
+        {% if result.signal is not none %}
+        <tr><th>Distance</th><td>{{ "{:,.3f}".format(result.distance_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal strength</th>
+            <td>
+                <span class="signal-bar" style="width: {{ (result.signal * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(result.signal * 100) }}
+            </td>
+        </tr>
+        {% else %}
+        <tr><th>Closest distance</th><td>{{ "{:,.1f}".format(result.min_dist_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal (closest)</th>
+            <td>
+                <span class="signal-bar" style="width: {{ (result.signal_min * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(result.signal_min * 100) }}
+            </td>
+        </tr>
+        <tr><th>Furthest distance</th><td>{{ "{:,.1f}".format(result.max_dist_mm) }} Mm</td></tr>
+        <tr>
+            <th>Signal (furthest)</th>
+            <td>
+                <span class="signal-bar" style="width: {{ (result.signal_max * 100)|int }}px"></span>
+                {{ "%.1f%%"|format(result.signal_max * 100) }}
+            </td>
+        </tr>
+        {% endif %}
+    </table>
+    {% endif %}
+
+    <script>
+    // ── Data from server ────────────────────────────────────────────────────
+    const ANTENNA_OPTIONS = {{ antenna_options | tojson }};
+    const FORM_STATE      = {{ form_state | tojson }};
+
+    // ── Hop-type section toggle ─────────────────────────────────────────────
+    function showSection(type) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        const sec = document.getElementById('sec-' + type);
+        if (sec) sec.classList.add('active');
+    }
+
+    // ── Vessel type toggle ──────────────────────────────────────────────────
+    function toggleVesselType(prefix, type) {
+        document.getElementById(prefix + '-dsn-config').style.display   = type === 'dsn'    ? '' : 'none';
+        document.getElementById(prefix + '-vessel-config').style.display = type === 'vessel' ? '' : 'none';
+    }
+
+    // ── Antenna row builder ─────────────────────────────────────────────────
+    function makeAntennaRow(prefix, data) {
+        const row = document.createElement('div');
+        row.className = 'antenna-row';
+
+        // Source dropdown
+        const sel = document.createElement('select');
+        sel.className = 'source';
+
+        const placeholder = new Option('— select antenna —', 'none');
+        sel.appendChild(placeholder);
+
+        // Group relay / direct
+        const groups = {};
+        ANTENNA_OPTIONS.forEach(opt => {
+            if (!groups[opt.group]) {
+                groups[opt.group] = document.createElement('optgroup');
+                groups[opt.group].label = opt.group;
+                sel.appendChild(groups[opt.group]);
+            }
+            groups[opt.group].appendChild(new Option(opt.label, opt.value));
+        });
+        sel.appendChild(new Option('Custom…', 'custom'));
+
+        if (data && data.source) sel.value = data.source;
+        sel.onchange = () => toggleCustomFields(row, sel.value);
+        row.appendChild(sel);
+
+        // Custom fields (hidden unless source === 'custom')
+        const cf = document.createElement('div');
+        cf.className = 'custom-fields';
+        cf.innerHTML =
+            'Power: <input type="number" class="power" step="any" min="0" value="' + (data && data.power != null ? data.power : 1) + '">' +
+            '<select class="power-unit">' +
+              '<option value="1">raw</option>' +
+              '<option value="1e3">k</option>' +
+              '<option value="1e6">M</option>' +
+              '<option value="1e9">G</option>' +
+            '</select>' +
+            ' Comb: <input type="number" class="combinability" step="0.01" min="0" max="1" value="' + (data && data.combinability != null ? data.combinability : 0.75) + '">';
+        if (data && data.power_unit) cf.querySelector('.power-unit').value = data.power_unit;
+        row.appendChild(cf);
+
+        // Remove button
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'remove-btn';
+        rm.textContent = '✕';
+        rm.onclick = () => { row.remove(); updateAddButton(prefix); };
+        row.appendChild(rm);
+
+        if (data && data.source === 'custom') cf.classList.add('visible');
+
+        return row;
+    }
+
+    function toggleCustomFields(row, value) {
+        row.querySelector('.custom-fields').classList.toggle('visible', value === 'custom');
+    }
+
+    function addAntenna(prefix, data) {
+        const container = document.getElementById(prefix + '-antennae');
+        if (container.querySelectorAll('.antenna-row').length >= 10) return;
+        container.appendChild(makeAntennaRow(prefix, data));
+        updateAddButton(prefix);
+    }
+
+    function updateAddButton(prefix) {
+        const count = document.getElementById(prefix + '-antennae').querySelectorAll('.antenna-row').length;
+        document.getElementById(prefix + '-add-btn').disabled = count >= 10;
+    }
+
+    // ── Serialise before submit ─────────────────────────────────────────────
+    function collectAntennaData(prefix) {
+        return Array.from(
+            document.getElementById(prefix + '-antennae').querySelectorAll('.antenna-row')
+        ).map(row => {
+            const source = row.querySelector('.source').value;
+            if (source === 'none') return null;
+            if (source === 'custom') return {
+                source,
+                power: row.querySelector('.power').value,
+                power_unit: row.querySelector('.power-unit').value,
+                combinability: row.querySelector('.combinability').value,
+            };
+            return { source };
+        }).filter(Boolean);
+    }
+
+    document.getElementById('hopForm').addEventListener('submit', function () {
+        ['va', 'vb'].forEach(prefix => {
+            document.getElementById(prefix + '_antenna_data').value =
+                JSON.stringify(collectAntennaData(prefix));
+        });
+        // Disable inputs in hidden hop sections so they don't pollute the POST
+        document.querySelectorAll('.section:not(.active) input, .section:not(.active) select')
+            .forEach(el => el.disabled = true);
+    });
+
+    // ── Restore state on page load ──────────────────────────────────────────
+    window.addEventListener('DOMContentLoaded', () => {
+        ['va', 'vb'].forEach(prefix => {
+            // Restore vessel type
+            const type = FORM_STATE[prefix + '_type'] || 'vessel';
+            document.getElementById(prefix + '_type').value = type;
+            toggleVesselType(prefix, type);
+
+            // Restore DSN level
+            const dsnLevel = FORM_STATE[prefix + '_dsn_level'];
+            if (dsnLevel) document.getElementById(prefix + '_dsn_level').value = dsnLevel;
+
+            // Restore antenna rows
+            let antennaData = [];
+            try { antennaData = JSON.parse(FORM_STATE[prefix + '_antenna_data'] || '[]'); } catch (e) {}
+            if (antennaData.length === 0) {
+                addAntenna(prefix);  // one empty row by default
+            } else {
+                antennaData.forEach(a => addAntenna(prefix, a));
+            }
+        });
+    });
+    </script>
+</body>
+</html>
